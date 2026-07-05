@@ -75,11 +75,39 @@ Traffic capture (tshark) → Feature extraction → ML inference (local model)
 
 Consensus quorum is computed over the **5 aggregator-tier nodes** (4 submains + central) — children don't vote, they only report. This keeps the BFT quorum small and tractable (f=1, need 3 of 5 to agree) instead of trying to get consensus across 21 nodes.
 
+## 5.5 Industry-pipeline alignment (Suricata/Zeek + Kafka + Elastic + SOAR benchmark)
+
+D-SHIELD was compared against the standard production NIDS stack. Where we match or
+exceed it (inline block, summary-only escalation, automated consensus vs human SOC,
+PQC + FL as novel additions), no change. Five gaps were found and are folded into the
+phases below:
+
+1. **Message broker instead of bare sockets** (industry: Kafka → ours: Redis pub/sub, one
+   instance per submain + one at central). If an aggregator is briefly down, alerts and FL
+   updates queue instead of vanishing. Payloads remain PQC-encrypted/signed end-to-end —
+   the broker only ever sees ciphertext, so it adds no trust assumptions.
+2. **Structured alert schema** (industry: Suricata EVE JSON). Every alert is a JSON object:
+   `{ts, reporter_id, suspect_id/src, attack_class, confidence, feature_snapshot, seq_no}`,
+   ML-DSA-signed over the canonical serialization. `seq_no` doubles as replay protection.
+3. **Heartbeat / liveness channel.** Every node emits a signed heartbeat every N seconds.
+   Consensus distinguishes three states: alive-and-clean, alive-and-accused, silent.
+   A silent node triggers *recovery* (restart/re-key), not *revocation* — a crashed child
+   must not be treated as an attacker (prevents false-positive isolation of dead nodes).
+4. **Dedup / correlation window at submain.** Alerts about the same (suspect, attack_class)
+   within a T-second window collapse into one case with an incremented evidence counter.
+   Consensus votes on *cases*, not raw alerts — prevents a real flood from also flooding
+   the consensus layer (alert-storm amplification).
+5. **Persistent event log** (industry: Elasticsearch → ours: SQLite per aggregator + merged
+   at central). Every alert, vote, action, and heartbeat is appended with timestamps.
+   This is non-negotiable for the research output: time-to-detect, time-to-heal, FPR, and
+   consensus-latency graphs are all computed from this log.
+
 ## 6. Build phases
 
 ### Phase 0 — Environment
 - Mininet topology script: 1 central + 4 submain + 16 children, custom tree topology (not default Mininet tree, since fan-out differs at each level).
 - tshark capture + filtering + CSV export pipeline running on each host.
+- Redis broker per aggregator node (5 instances); define the JSON alert schema and the SQLite event-log schema up front — everything downstream writes to them.
 
 ### Phase 1 — PQC channel (submain ↔ child, single pair first)
 - Integrate `liboqs`/`oqs-provider` for ML-KEM handshake + ML-DSA signing.
@@ -101,13 +129,15 @@ Consensus quorum is computed over the **5 aggregator-tier nodes** (4 submains + 
 - Sanity-bound aggregation inputs (reject outlier updates) so a compromised child can't poison the global model — this is the guard for the feedback-loop risk flagged earlier.
 
 ### Phase 5 — Consensus + response
-- Implement 2f+1 voting among the 5 aggregator-tier nodes.
+- Implement 2f+1 voting among the 5 aggregator-tier nodes — votes are cast on deduplicated *cases* (Section 5.5 #4), not individual alerts.
+- Heartbeat/liveness channel: silent node → recovery path; accused node → consensus path (Section 5.5 #3).
 - Wire consensus result → isolate/revoke action.
 - Define re-trust path: how an isolated node re-registers (new PQC keypair, probation period with reduced trust weight in future votes).
 
 ### Phase 6 — Attack simulation + evaluation
 - Script each attack from Section 4 against the full tree.
-- Collect metrics: detection accuracy / false-positive rate, time-to-detect, time-to-heal, PQC vs classical latency overhead, FL convergence with/without malicious updates.
+- Collect metrics from the persistent event log (Section 5.5 #5): detection accuracy / false-positive rate, time-to-detect, time-to-heal, consensus latency, PQC vs classical latency overhead, FL convergence with/without malicious updates.
+- Extra scenario enabled by the broker: kill one submain mid-attack and show alerts queue and replay on recovery (no data loss) — a resilience result the direct-socket design could not demonstrate.
 - Generate report graphs (Pandas + Matplotlib) — matches your original reporting pipeline.
 
 ## 7. Open items to resolve during build (not blocking start)

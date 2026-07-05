@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>D-SHIELD — Architecture, Workflow &amp; Attack Simulation</title>
+<style>
+  :root{
+    --bg:#0e1117; --panel:#161b24; --panel2:#1c2330; --ink:#e6e9f0; --dim:#8b94a7;
+    --line:#2a3244; --accent:#4f8cff; --ok:#3ecf8e; --warn:#f5b83d; --bad:#ff5d5d;
+    --pqc:#b57bff; --fl:#37c3d6;
+    font-size:15px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:"Segoe UI",system-ui,sans-serif;line-height:1.45}
+  header{padding:34px 28px 10px;max-width:1180px;margin:0 auto}
+  h1{margin:0;font-size:2rem;letter-spacing:.5px}
+  h1 span{color:var(--accent)}
+  .sub{color:var(--dim);margin-top:6px}
+  section{max-width:1180px;margin:26px auto;padding:0 28px}
+  h2{font-size:1.15rem;border-left:4px solid var(--accent);padding-left:10px;margin-bottom:14px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px}
+  .legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:12px;font-size:.85rem;color:var(--dim)}
+  .legend i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+  /* flow boxes */
+  .flow{display:flex;flex-direction:column;align-items:center;gap:0}
+  .box{background:var(--panel2);border:1.5px solid var(--line);border-radius:9px;padding:10px 18px;text-align:center;min-width:220px;position:relative}
+  .box b{display:block;font-size:.95rem}
+  .box small{color:var(--dim)}
+  .box.ok{border-color:var(--ok)} .box.bad{border-color:var(--bad)} .box.warn{border-color:var(--warn)}
+  .box.pqc{border-color:var(--pqc)} .box.fl{border-color:var(--fl)} .box.acc{border-color:var(--accent)}
+  .arrow{width:2px;height:26px;background:var(--line);position:relative;margin:0 auto}
+  .arrow::after{content:"";position:absolute;bottom:-1px;left:-4px;border:5px solid transparent;border-top:7px solid var(--line)}
+  .row{display:flex;gap:18px;flex-wrap:wrap;justify-content:center;align-items:stretch}
+  .branch{display:flex;flex-direction:column;align-items:center}
+  .lbl{font-size:.75rem;color:var(--dim);margin:2px 0}
+  /* topology svg */
+  svg text{font-family:inherit}
+  /* phases */
+  .phases{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px}
+  .phase{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:14px}
+  .phase h3{margin:0 0 6px;font-size:.95rem;color:var(--accent)}
+  .phase ul{margin:0;padding-left:18px;color:var(--dim);font-size:.86rem}
+  .phase .tag{float:right;font-size:.7rem;padding:2px 8px;border-radius:20px;background:#26304a;color:var(--accent)}
+  /* validated decisions */
+  table{width:100%;border-collapse:collapse;font-size:.88rem}
+  th,td{border:1px solid var(--line);padding:9px 12px;text-align:left;vertical-align:top}
+  th{background:var(--panel2);color:var(--accent)}
+  td.was{color:var(--dim)} td.now{color:var(--ok)}
+  /* simulation */
+  #simWrap{position:relative}
+  .simControls{display:flex;gap:10px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+  button{background:var(--accent);border:0;color:#fff;font:inherit;padding:8px 18px;border-radius:8px;cursor:pointer}
+  button.secondary{background:var(--panel2);border:1px solid var(--line)}
+  button:disabled{opacity:.45;cursor:default}
+  #simLog{background:#0a0d13;border:1px solid var(--line);border-radius:8px;padding:12px 14px;height:170px;overflow-y:auto;font-family:Consolas,monospace;font-size:.82rem;margin-top:14px}
+  #simLog div{margin:2px 0}
+  .t-info{color:var(--dim)} .t-alert{color:var(--warn)} .t-bad{color:var(--bad)} .t-ok{color:var(--ok)} .t-pqc{color:var(--pqc)}
+  .stepchips{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+  .chip{font-size:.75rem;border:1px solid var(--line);border-radius:20px;padding:3px 12px;color:var(--dim)}
+  .chip.active{border-color:var(--warn);color:var(--warn)}
+  .chip.done{border-color:var(--ok);color:var(--ok)}
+  footer{max-width:1180px;margin:40px auto;padding:0 28px 40px;color:var(--dim);font-size:.8rem}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>D-<span>SHIELD</span> — Full Workflow &amp; Attack Simulation</h1>
+  <div class="sub">Decentralized Self-Healing Intelligent Event Learning Defense · 3-tier PQC-secured federated NIDS · research build</div>
+</header>
+
+<!-- ══════════════ 1. TOPOLOGY ══════════════ -->
+<section>
+  <h2>1 · Network Topology (21 Mininet hosts)</h2>
+  <div class="panel">
+    <svg id="topo" viewBox="0 0 1100 400" width="100%" aria-label="topology">
+      <!-- links drawn by JS -->
+    </svg>
+    <div class="legend">
+      <span><i style="background:var(--accent)"></i>Central (aggregation + consensus)</span>
+      <span><i style="background:var(--fl)"></i>Submain ×4 (regional FL aggregator, votes in consensus)</span>
+      <span><i style="background:#5b6478"></i>Child ×16 (sensor + local RF model)</span>
+      <span><i style="background:var(--pqc)"></i>PQC link: ML-KEM handshake + ML-DSA signed (every link)</span>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════ 2. VALIDATED DECISIONS ══════════════ -->
+<section>
+  <h2>2 · Validated Design Decisions (initial idea → refined)</h2>
+  <div class="panel">
+    <table>
+      <tr><th>Area</th><th>Initial idea</th><th>Validated / changed to</th><th>Why</th></tr>
+      <tr><td>Security scope</td><td class="was">PQC only between central ↔ submain</td><td class="now">PQC on <b>all</b> links (child↔submain too)</td><td>FL updates &amp; alerts travel every link; signing is load-bearing for poisoning attribution</td></tr>
+      <tr><td>FL structure</td><td class="was">"an FL in between", unspecified</td><td class="now">Two-tier FedAvg: child → submain → central</td><td>Matches hierarchical FL literature; central never sees raw traffic</td></tr>
+      <tr><td>Consensus</td><td class="was">2f+1 over all nodes (vague)</td><td class="now">Quorum over 5 aggregator nodes only (3-of-5, f=1)</td><td>BFT over 21 nodes intractable; children report, they don't vote</td></tr>
+      <tr><td>Live-path model</td><td class="was">Random Forest or LSTM</td><td class="now">RF in the hot path; LSTM offline-only (optional)</td><td>LSTM windowing latency unacceptable before "block" action</td></tr>
+      <tr><td>Central node role</td><td class="was">All requests flow to central</td><td class="now">Central gets alerts/summaries only (SIEM-style, out of data plane)</td><td>Real NIDS (Zeek cluster) escalate summaries, not raw traffic</td></tr>
+      <tr><td>Self-healing</td><td class="was">Isolate = endpoint</td><td class="now">Re-trust path: new keypair + probation weight</td><td>One false positive must not permanently shrink the network</td></tr>
+      <tr><td>FL poisoning guard</td><td class="was">None</td><td class="now">Outlier-reject on updates before aggregation (baseline mitigation, not a solved claim)</td><td>Compromised child must not silently poison the global model</td></tr>
+      <tr><td>Crypto implementation</td><td class="was">—</td><td class="now">liboqs / oqs-provider (never hand-rolled)</td><td>Engineering time goes to detection + consensus, not crypto bugs</td></tr>
+      <tr><td>Transport</td><td class="was">Direct sockets between nodes</td><td class="now">Redis pub/sub broker per aggregator (payloads stay PQC-encrypted)</td><td>Industry (Kafka) pattern: aggregator down ≠ alerts lost; enables kill-and-recover demo</td></tr>
+      <tr><td>Alert format</td><td class="was">Undefined message</td><td class="now">Signed JSON schema (EVE-style): ts, reporter, suspect, class, confidence, seq_no</td><td>Machine-parseable, replay-protected, provable origin</td></tr>
+      <tr><td>Dead vs malicious</td><td class="was">Not distinguished</td><td class="now">Signed heartbeats; silent → recover, accused → vote</td><td>A crashed child must not be revoked as an attacker</td></tr>
+      <tr><td>Alert storms</td><td class="was">Every alert propagates</td><td class="now">Submain dedup window → consensus votes on cases, not alerts</td><td>A real flood must not also flood the consensus layer</td></tr>
+      <tr><td>Evaluation data</td><td class="was">Not specified</td><td class="now">SQLite event log at every aggregator (all alerts/votes/actions/heartbeats)</td><td>Time-to-detect / time-to-heal / FPR graphs computed from it</td></tr>
+    </table>
+  </div>
+</section>
+
+<!-- ══════════════ 2b. INDUSTRY COMPARISON ══════════════ -->
+<section>
+  <h2>2b · Industry Pipeline Benchmark (Suricata/Zeek + Kafka + Elastic + SOAR)</h2>
+  <div class="panel">
+    <table>
+      <tr><th>Capability</th><th>Industry stack</th><th>D-SHIELD</th><th>Status</th></tr>
+      <tr><td>Inline detect + block</td><td>Suricata IPS per sensor</td><td>Child RF + immediate local block</td><td style="color:var(--ok)">✅ equivalent</td></tr>
+      <tr><td>Summary-only escalation</td><td>EVE JSON events, never raw pcaps</td><td>Signed alerts only, up-tree</td><td style="color:var(--ok)">✅ equivalent</td></tr>
+      <tr><td>Transport buffering</td><td>Kafka queues survive consumer outage</td><td>Redis pub/sub per aggregator (added)</td><td style="color:var(--ok)">✅ closed</td></tr>
+      <tr><td>Structured alerts</td><td>EVE JSON schema</td><td>Signed JSON schema (added)</td><td style="color:var(--ok)">✅ closed</td></tr>
+      <tr><td>Health vs malice</td><td>Metricbeat heartbeats</td><td>Signed heartbeats (added)</td><td style="color:var(--ok)">✅ closed</td></tr>
+      <tr><td>Alert dedup / correlation</td><td>Elastic rules + SOAR case merge</td><td>Submain dedup window → cases (added)</td><td style="color:var(--ok)">✅ closed</td></tr>
+      <tr><td>Persistent event store</td><td>Elasticsearch</td><td>SQLite event log per aggregator (added)</td><td style="color:var(--ok)">✅ closed</td></tr>
+      <tr><td>Global response authority</td><td>Human analyst / SOAR approval (min–hrs)</td><td>3-of-5 automated consensus (seconds)</td><td style="color:var(--pqc)">★ D-SHIELD ahead</td></tr>
+      <tr><td>PQC transport + signed provenance</td><td>essentially absent in production</td><td>ML-KEM + ML-DSA on every link</td><td style="color:var(--pqc)">★ novelty</td></tr>
+      <tr><td>Model improvement</td><td>static rules + vendor updates</td><td>two-tier federated learning</td><td style="color:var(--pqc)">★ novelty</td></tr>
+    </table>
+  </div>
+</section>
+
+<!-- ══════════════ 3. END-TO-END WORKFLOW ══════════════ -->
+<section>
+  <h2>3 · End-to-End Workflow (per event)</h2>
+  <div class="panel">
+    <div class="flow">
+      <div class="box pqc"><b>PQC Secure Channel Setup</b><small>ML-KEM key exchange · ML-DSA mutual auth · per-session keys</small></div>
+      <div class="arrow"></div>
+      <div class="box"><b>Traffic Capture (child)</b><small>tshark on host interface → rolling CSV</small></div>
+      <div class="arrow"></div>
+      <div class="box"><b>Feature Extraction</b><small>pkt rate · size dist · src entropy · MAC/IP pairs · timing</small></div>
+      <div class="arrow"></div>
+      <div class="box acc"><b>Local ML Inference (Random Forest)</b><small>runs continuously between FL rounds</small></div>
+      <div class="arrow"></div>
+      <div class="row">
+        <div class="branch">
+          <div class="lbl">no alert</div>
+          <div class="box ok"><b>Continue Monitoring</b><small>features feed next local training round</small></div>
+        </div>
+        <div class="branch">
+          <div class="lbl">alert</div>
+          <div class="box warn"><b>Validate Severity</b><small>threshold + repeat-window check</small></div>
+          <div class="arrow"></div>
+          <div class="box bad"><b>Local Action: Block</b><small>immediate, does not wait for consensus</small></div>
+          <div class="arrow"></div>
+          <div class="box pqc"><b>Signed Alert → Submain</b><small>ML-DSA signature = provable origin</small></div>
+          <div class="arrow"></div>
+          <div class="box fl"><b>Submain correlates + broadcasts</b><small>to peer submains &amp; central</small></div>
+          <div class="arrow"></div>
+          <div class="box acc"><b>Consensus: 3-of-5 aggregators agree?</b><small>4 submains + central vote</small></div>
+          <div class="arrow"></div>
+          <div class="box bad"><b>Global Action: Isolate / Revoke</b><small>keys revoked, node cut from tree</small></div>
+          <div class="arrow"></div>
+          <div class="box ok"><b>Self-Heal: Re-trust Path</b><small>new keypair · probation weight · gradual reintegration</small></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════ 4. FL LOOP ══════════════ -->
+<section>
+  <h2>4 · Two-Tier Federated Learning Loop (background, every round)</h2>
+  <div class="panel">
+    <div class="flow">
+      <div class="box"><b>16 children train locally</b><small>on own tshark features — raw traffic never leaves the node</small></div>
+      <div class="arrow"></div>
+      <div class="box pqc"><b>Signed + encrypted weight updates → submain</b></div>
+      <div class="arrow"></div>
+      <div class="box warn"><b>Outlier-reject gate</b><small>updates outside sanity bounds dropped (poisoning guard)</small></div>
+      <div class="arrow"></div>
+      <div class="box fl"><b>Submain FedAvg (4 children)</b></div>
+      <div class="arrow"></div>
+      <div class="box fl"><b>Central FedAvg (4 submains) → global model</b></div>
+      <div class="arrow"></div>
+      <div class="box ok"><b>Global model broadcast back down</b><small>central → submain → children, for next round</small></div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════ 5. ATTACK SIMULATION ══════════════ -->
+<section>
+  <h2>5 · Live Attack Simulation — DoS flood at child S2-C3</h2>
+  <div class="panel" id="simWrap">
+    <div class="simControls">
+      <button id="btnRun">▶ Run simulation</button>
+      <button id="btnStep" class="secondary">Step ›</button>
+      <button id="btnReset" class="secondary">↺ Reset</button>
+      <span class="lbl" id="simStatus">idle</span>
+    </div>
+    <svg id="sim" viewBox="0 0 1100 400" width="100%" aria-label="attack simulation"></svg>
+    <div class="stepchips" id="chips"></div>
+    <div id="simLog"><div class="t-info">— simulation log —</div></div>
+  </div>
+</section>
+
+<!-- ══════════════ 6. PHASES ══════════════ -->
+<section>
+  <h2>6 · Build Phases</h2>
+  <div class="phases">
+    <div class="phase"><span class="tag">P0</span><h3>Environment</h3><ul><li>Custom Mininet tree (1+4+16)</li><li>tshark → CSV pipeline per host</li><li>Redis broker ×5 · alert JSON schema · SQLite event-log schema</li></ul></div>
+    <div class="phase"><span class="tag">P1</span><h3>PQC pair</h3><ul><li>liboqs: ML-KEM + ML-DSA</li><li>1 child ↔ 1 submain end-to-end</li><li>Replay-rejection test</li></ul></div>
+    <div class="phase"><span class="tag">P2</span><h3>Scale security</h3><ul><li>All 20 links secured</li><li>Classical vs PQC latency benchmark ← headline result</li></ul></div>
+    <div class="phase"><span class="tag">P3</span><h3>Local detection</h3><ul><li>Feature extraction</li><li>Per-child Random Forest</li><li>Detect→block loop, latency-checked</li></ul></div>
+    <div class="phase"><span class="tag">P4</span><h3>Federated learning</h3><ul><li>Two-tier FedAvg</li><li>Signed/encrypted updates</li><li>Outlier-reject poisoning guard</li></ul></div>
+    <div class="phase"><span class="tag">P5</span><h3>Consensus + response</h3><ul><li>3-of-5 voting on deduped cases</li><li>Heartbeats: silent→recover, accused→vote</li><li>Isolate / revoke wiring</li><li>Re-trust probation path</li></ul></div>
+    <div class="phase"><span class="tag">P6</span><h3>Attack eval</h3><ul><li>DoS · MITM · replay · compromise</li><li>Accuracy, FPR, time-to-detect, time-to-heal</li><li>Report graphs (Pandas/Matplotlib)</li></ul></div>
+  </div>
+</section>
+
+<footer>D-SHIELD research plan · scope-cut order if timeline compresses: LSTM → tree size → BFT simplification. Never cut: PQC layer or classical-vs-PQC comparison.</footer>
+
+<script>
+/* ---------- shared topology drawing ---------- */
+const NS = "http://www.w3.org/2000/svg";
+function el(tag, attrs, parent){ const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; }
+
+function layout(){
+  const nodes = { central: {x:550, y:50, r:22, label:"CENTRAL", color:"#4f8cff", kind:"central"} };
+  const subX = [190, 430, 670, 910];
+  for (let s=0; s<4; s++){
+    nodes["S"+(s+1)] = {x:subX[s], y:180, r:17, label:"S"+(s+1), color:"#37c3d6", kind:"submain"};
+    for (let c=0; c<4; c++){
+      nodes["S"+(s+1)+"-C"+(c+1)] = {x:subX[s]-75+c*50, y:320, r:11, label:"C"+(c+1), color:"#5b6478", kind:"child", parent:"S"+(s+1)};
+    }
+  }
+  const links = [];
+  for (let s=1; s<=4; s++){
+    links.push(["central","S"+s]);
+    for (let c=1; c<=4; c++) links.push(["S"+s, "S"+s+"-C"+c]);
+  }
+  return {nodes, links};
+}
+
+function drawTopo(svg, opts){
+  const {nodes, links} = layout();
+  svg.innerHTML = "";
+  const gL = el("g", {}, svg), gN = el("g", {}, svg);
+  const linkEls = {}, nodeEls = {};
+  for (const [a,b] of links){
+    const A = nodes[a], B = nodes[b];
+    const ln = el("line", {x1:A.x, y1:A.y, x2:B.x, y2:B.y, stroke:"#b57bff", "stroke-width":1.6, "stroke-opacity":0.55}, gL);
+    linkEls[a+"|"+b] = ln;
+  }
+  for (const id in nodes){
+    const n = nodes[id];
+    const g = el("g", {}, gN);
+    const c = el("circle", {cx:n.x, cy:n.y, r:n.r, fill:n.color, stroke:"#0e1117", "stroke-width":2}, g);
+    el("text", {x:n.x, y:n.y + n.r + 15, "text-anchor":"middle", fill:"#8b94a7", "font-size":(n.kind==="child"?10:12)}, g).textContent = n.label;
+    if (n.kind !== "child"){
+      el("text", {x:n.x, y:n.y+4, "text-anchor":"middle", fill:"#0e1117", "font-size":10, "font-weight":"bold"}, g).textContent = n.kind==="central" ? "C0" : n.label;
+    }
+    nodeEls[id] = c;
+  }
+  if (opts && opts.pqcLabel){
+    el("text", {x:550, y:392, "text-anchor":"middle", fill:"#b57bff", "font-size":11}, svg).textContent = "— every link: ML-KEM session + ML-DSA signed —";
+  }
+  return {nodes, links, linkEls, nodeEls, svg};
+}
+
+drawTopo(document.getElementById("topo"), {pqcLabel:true});
+
+/* ---------- attack simulation ---------- */
+const sim = drawTopo(document.getElementById("sim"), {});
+const TARGET = "S2-C3", SUB = "S2";
+const log = document.getElementById("simLog");
+const statusEl = document.getElementById("simStatus");
+const chipsEl = document.getElementById("chips");
+
+const steps = [
+  {chip:"Attack begins", run(){
+    setNode(TARGET, "#ff5d5d");
+    flood(TARGET, true);
+    say("attacker floods "+TARGET+" — 40× normal packet rate, single-source", "t-bad");
+    status("DoS flood in progress at "+TARGET);
+  }},
+  {chip:"Local detection", run(){
+    say(TARGET+": tshark features → RF inference → class=DoS (conf 0.97)", "t-alert");
+    say(TARGET+": severity validated (rate sustained > threshold for 3 windows)", "t-alert");
+    status("local model flags DoS");
+  }},
+  {chip:"Local block", run(){
+    say(TARGET+": LOCAL ACTION — attacker src blocked immediately (no consensus wait)", "t-ok");
+    flood(TARGET, false);
+    status("local block applied");
+  }},
+  {chip:"Signed alert ↑", run(){
+    pulse(SUB+"|"+TARGET);
+    say(TARGET+" → "+SUB+": alert sent over PQC channel, ML-DSA signed (origin provable)", "t-pqc");
+    status("alert escalated to submain");
+  }},
+  {chip:"Broadcast", run(){
+    setNode(SUB, "#f5b83d");
+    ["central|S1","central|S2","central|S3","central|S4"].forEach(pulse);
+    say(SUB+": correlates alert, broadcasts to central + peer submains", "t-alert");
+    status("aggregator tier notified");
+  }},
+  {chip:"Consensus 3-of-5", run(){
+    ["S1","S3","S4","central"].forEach(id => setNode(id, "#f5b83d"));
+    say("votes — S1:✔ S2:✔ S3:✔ S4:✘(no visibility) central:✔  → 4 of 5 ≥ quorum(3)", "t-ok");
+    say("consensus: attacker source marked malicious network-wide", "t-ok");
+    status("consensus reached (4/5)");
+  }},
+  {chip:"Global isolate", run(){
+    dimLink(SUB+"|"+TARGET);
+    setNode(TARGET, "#5b2430");
+    ["S1","S3","S4","central",SUB].forEach(id => resetNode(id));
+    say("GLOBAL ACTION: "+TARGET+" isolated pending inspection · attacker keys revoked (ML-DSA cert blacklist)", "t-bad");
+    status(TARGET+" isolated");
+  }},
+  {chip:"FL guard", run(){
+    say("FL round: "+TARGET+"'s pending model update dropped by outlier-reject gate — no poisoning of global model", "t-pqc");
+    status("model integrity preserved");
+  }},
+  {chip:"Self-heal", run(){
+    undimLink(SUB+"|"+TARGET);
+    setNode(TARGET, "#3ecf8e");
+    say(TARGET+": re-trust path — fresh ML-KEM/ML-DSA keypair issued, rejoins on probation (reduced vote/aggregation weight)", "t-ok");
+    say("network restored — time-to-detect, time-to-heal logged for report metrics", "t-info");
+    status("healed · simulation complete");
+  }},
+];
+
+let idx = 0, timer = null, floodTimer = null;
+
+steps.forEach((s,i)=>{ const c=document.createElement("span"); c.className="chip"; c.textContent=(i+1)+". "+s.chip; chipsEl.appendChild(c); });
+
+function say(msg, cls){ const d=document.createElement("div"); d.className=cls||"t-info"; d.textContent="["+String(idx).padStart(2,"0")+"] "+msg; log.appendChild(d); log.scrollTop=log.scrollHeight; }
+function status(t){ statusEl.textContent = t; }
+function setNode(id, color){ sim.nodeEls[id].setAttribute("fill", color); }
+function resetNode(id){ sim.nodeEls[id].setAttribute("fill", sim.nodes[id].color); }
+function dimLink(key){ const l=sim.linkEls[key]; if(l){ l.setAttribute("stroke","#3a2030"); l.setAttribute("stroke-dasharray","4 5"); } }
+function undimLink(key){ const l=sim.linkEls[key]; if(l){ l.setAttribute("stroke","#b57bff"); l.removeAttribute("stroke-dasharray"); } }
+function pulse(key){
+  const l = sim.linkEls[key]; if(!l) return;
+  const dot = el("circle", {r:5, fill:"#f5b83d"}, sim.svg);
+  const x1=+l.getAttribute("x2"), y1=+l.getAttribute("y2"), x2=+l.getAttribute("x1"), y2=+l.getAttribute("y1");
+  let t=0; const iv=setInterval(()=>{ t+=0.04; if(t>=1){clearInterval(iv); dot.remove(); return;}
+    dot.setAttribute("cx", x1+(x2-x1)*t); dot.setAttribute("cy", y1+(y2-y1)*t); }, 16);
+}
+function flood(id, on){
+  if (floodTimer){ clearInterval(floodTimer); floodTimer=null; }
+  if (!on) return;
+  const n = sim.nodes[id];
+  floodTimer = setInterval(()=>{
+    const dot = el("circle", {cx:n.x+(Math.random()*160-80), cy:395, r:3, fill:"#ff5d5d", opacity:0.9}, sim.svg);
+    let t=0; const sx=+dot.getAttribute("cx");
+    const iv=setInterval(()=>{ t+=0.06; if(t>=1){clearInterval(iv); dot.remove(); return;}
+      dot.setAttribute("cx", sx+(n.x-sx)*t); dot.setAttribute("cy", 395+(n.y-395)*t); }, 16);
+  }, 90);
+}
+function updateChips(){
+  [...chipsEl.children].forEach((c,i)=>{ c.className = "chip" + (i<idx ? " done" : i===idx ? " active" : ""); });
+}
+function doStep(){
+  if (idx >= steps.length){ stopAuto(); return; }
+  updateChips();
+  steps[idx].run();
+  idx++;
+  [...chipsEl.children].forEach((c,i)=>{ if(i<idx) c.className="chip done"; });
+  if (idx >= steps.length) stopAuto();
+}
+function stopAuto(){ if(timer){clearInterval(timer); timer=null;} document.getElementById("btnRun").disabled = idx>=steps.length; }
+function reset(){
+  stopAuto(); if(floodTimer){clearInterval(floodTimer); floodTimer=null;}
+  idx=0; log.innerHTML='<div class="t-info">— simulation log —</div>'; status("idle");
+  drawTopoInto();
+  updateChips(); [...chipsEl.children].forEach(c=>c.className="chip");
+  document.getElementById("btnRun").disabled=false;
+}
+function drawTopoInto(){
+  const fresh = drawTopo(document.getElementById("sim"), {});
+  sim.nodes=fresh.nodes; sim.links=fresh.links; sim.linkEls=fresh.linkEls; sim.nodeEls=fresh.nodeEls; sim.svg=fresh.svg;
+}
+document.getElementById("btnRun").onclick = ()=>{ if(timer) return; if(idx>=steps.length) reset(); timer=setInterval(doStep, 1800); doStep(); };
+document.getElementById("btnStep").onclick = ()=>{ stopAuto(); doStep(); };
+document.getElementById("btnReset").onclick = reset;
+</script>
+</body>
+</html>
